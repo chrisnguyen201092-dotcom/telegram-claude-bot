@@ -906,6 +906,10 @@ sudo journalctl -u telegram-claude-bot -f  # Xem nhật ký
 
 ---
 
+## Credits
+
+Created by [AISIEURE.COM](https://aisieure.com) | Author: **SHYKEDEV**
+
 ## License
 
 MIT
