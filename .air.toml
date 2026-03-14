@@ -1,0 +1,15 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/bot.exe ./cmd/bot/"
+  bin = "./tmp/bot.exe"
+  delay = 1000
+  exclude_dir = ["tmp", "data", "static", "node_modules", "dashboard", ".omc", ".git", ".claude"]
+  exclude_regex = ["_test\\.go$"]
+  include_ext = ["go", "toml", "env"]
+  kill_delay = "1s"
+  stop_on_error = true
+
+[misc]
+  clean_on_exit = true

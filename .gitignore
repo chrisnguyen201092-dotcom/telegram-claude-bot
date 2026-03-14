@@ -1,0 +1,28 @@
+# Go
+dist/
+data/
+.env
+.omc/
+
+# Binary
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+telegram-claude-bot
+
+# Test
+*.test
+*.out
+cover.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/settings.local.json
