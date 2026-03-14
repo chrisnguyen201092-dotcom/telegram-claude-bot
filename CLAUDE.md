@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Telegram bot providing Claude AI assistant capabilities to whitelisted users. Built in **Go**, uses Claude CLI subprocess for AI integration. Features per-user model/effort/thinking settings, rule system, memory persistence, session management (Markdown-based), image vision, MCP server config, and an admin dashboard.
+Telegram bot providing Claude AI assistant capabilities to whitelisted users. Built in **Go**, uses Claude CLI subprocess for AI integration. Features per-user model/effort/thinking settings, rule system, memory persistence, session management (Markdown-based), image vision, MCP server config.
 
 ## Development Commands
 
@@ -31,7 +31,6 @@ go mod tidy
 
 1. **Telegram Bot** (`internal/bot/`) — telebot v4 in long-polling mode. 17+ commands, inline keyboard callbacks, photo/document uploads.
 2. **Claude Integration** (`internal/claude/`) — Wraps `claude` CLI subprocess with streaming JSON output. Per-user settings, rate limiting, session compaction.
-3. **Dashboard Server** (`internal/dashboard/`) — chi HTTP router with REST API and WebSocket for live event streaming.
 
 **Data Storage:** JSON files + Markdown (no database).
 - `data/users/{telegram_id}.json` — user profiles
@@ -44,8 +43,7 @@ go mod tidy
 - `data/logs/{date}.json` — daily activity logs
 - `data/config.json` — global config overrides
 
-**Data flow:** Bot handler → `claude.SendToClaude()` → CLI subprocess with streaming → callbacks update Telegram message → events broadcast via EventBus → WebSocket dashboard.
-
+**Data flow:** Bot handler → `claude.SendToClaude()` → CLI subprocess with streaming → callbacks update Telegram message → events broadcast via EventBus
 ## Key Technical Details
 
 - **Runtime is Go.** Uses standard library + telebot v4 + chi + coder/websocket.
@@ -81,8 +79,6 @@ go mod tidy
 | `internal/bot/` | Bot setup, handlers, callbacks, keyboards, middleware |
 | `internal/claude/` | CLI wrapper, types, rate limiting, session compaction |
 | `internal/store/` | JSON/Markdown CRUD for all entities |
-| `internal/dashboard/` | HTTP server, WebSocket hub, REST API |
 | `internal/events/` | EventBus pub/sub |
 | `internal/format/` | Markdown→HTML converter, message splitting |
-| `static/` | Dashboard HTML |
 | `data/` | Runtime data files (gitignored) |
