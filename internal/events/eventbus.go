@@ -1,8 +1,8 @@
 package events
 
 import (
-	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,14 +35,23 @@ type EventData struct {
 	Data      map[string]any `json:"data,omitempty"`
 }
 
+// M5: subscription wraps a callback with a unique ID for reliable removal.
+type subscription struct {
+	id       int
+	callback func(EventData)
+}
+
+// M5: nextSubID is an atomic counter for generating unique subscription IDs.
+var nextSubID atomic.Int64
+
 type EventBus struct {
 	mu        sync.RWMutex
-	listeners map[string][]func(EventData)
+	listeners map[string][]subscription
 }
 
 func NewEventBus() *EventBus {
 	return &EventBus{
-		listeners: make(map[string][]func(EventData)),
+		listeners: make(map[string][]subscription),
 	}
 }
 
@@ -54,37 +63,40 @@ func (eb *EventBus) Emit(eventType string, data map[string]any) {
 	}
 
 	eb.mu.RLock()
-	specific := make([]func(EventData), len(eb.listeners[eventType]))
+	specific := make([]subscription, len(eb.listeners[eventType]))
 	copy(specific, eb.listeners[eventType])
-	wildcard := make([]func(EventData), len(eb.listeners["*"]))
+	wildcard := make([]subscription, len(eb.listeners["*"]))
 	copy(wildcard, eb.listeners["*"])
 	eb.mu.RUnlock()
 
-	for _, cb := range specific {
-		cb := cb
-		go cb(event)
+	// M10: Call listeners synchronously — they're fast log/broadcast ops.
+	// Avoids unbounded goroutine spawning.
+	for _, sub := range specific {
+		sub.callback(event)
 	}
-	for _, cb := range wildcard {
-		cb := cb
-		go cb(event)
+	for _, sub := range wildcard {
+		sub.callback(event)
 	}
 }
 
-func (eb *EventBus) On(eventType string, callback func(EventData)) {
+// M5: On registers a listener and returns a subscription ID for reliable removal via Off.
+func (eb *EventBus) On(eventType string, callback func(EventData)) int {
+	id := int(nextSubID.Add(1))
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
-	eb.listeners[eventType] = append(eb.listeners[eventType], callback)
+	eb.listeners[eventType] = append(eb.listeners[eventType], subscription{id: id, callback: callback})
+	return id
 }
 
-func (eb *EventBus) Off(eventType string, callback func(EventData)) {
+// M5: Off removes a listener by subscription ID (returned by On), avoiding pointer comparison issues.
+func (eb *EventBus) Off(eventType string, subID int) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
-	cbs := eb.listeners[eventType]
-	cbPtr := reflect.ValueOf(callback).Pointer()
-	result := cbs[:0]
-	for _, cb := range cbs {
-		if reflect.ValueOf(cb).Pointer() != cbPtr {
-			result = append(result, cb)
+	subs := eb.listeners[eventType]
+	result := subs[:0]
+	for _, s := range subs {
+		if s.id != subID {
+			result = append(result, s)
 		}
 	}
 	eb.listeners[eventType] = result

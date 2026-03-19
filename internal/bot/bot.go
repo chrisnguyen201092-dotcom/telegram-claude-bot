@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strconv"
@@ -85,6 +86,11 @@ func (b *Bot) Stop() {
 	b.tele.Stop()
 }
 
+// H8: StartCleanup starts the rate limiter cleanup goroutine.
+func (b *Bot) StartCleanup(ctx context.Context) {
+	b.rateLimiter.StartCleanup(ctx)
+}
+
 func (b *Bot) registerHandlers() {
 	// Whitelisted group
 	wl := b.tele.Group()
@@ -124,8 +130,8 @@ func (b *Bot) registerHandlers() {
 	wl.Handle(tele.OnPhoto, b.handlePhoto)
 	wl.Handle(tele.OnDocument, b.handleDocument)
 
-	// Callback queries (global)
-	b.tele.Handle(tele.OnCallback, b.handleCallback)
+	// H4: Callback queries on whitelisted group (was global, bypassing auth)
+	wl.Handle(tele.OnCallback, b.handleCallback)
 }
 
 // telegramID returns the string telegram ID from context.

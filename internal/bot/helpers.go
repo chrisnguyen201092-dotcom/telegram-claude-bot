@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,8 @@ func (b *Bot) sendLong(c tele.Context, text string, parseMode string) error {
 	return nil
 }
 
-// validateDir checks if a directory is allowed.
+// validateDir checks if a directory is within allowed directories.
+// L2: Uses separator-aware prefix check to prevent /allowed_extra bypass.
 func (b *Bot) validateDir(dir string) bool {
 	allowed := b.config.AllowedWorkingDirs
 	if len(allowed) == 0 {
@@ -46,7 +48,8 @@ func (b *Bot) validateDir(dir string) bool {
 	cleanDir := filepath.Clean(dir)
 	for _, a := range allowed {
 		cleanAllowed := filepath.Clean(a)
-		if strings.HasPrefix(cleanDir, cleanAllowed) {
+		// Exact match or proper subdirectory (with separator)
+		if cleanDir == cleanAllowed || strings.HasPrefix(cleanDir, cleanAllowed+string(filepath.Separator)) {
 			return true
 		}
 	}
@@ -69,7 +72,16 @@ func (b *Bot) isAdmin(tid string) bool {
 }
 
 // sendFile sends a file from the server to the user.
+// C2: Validates path against AllowedWorkingDirs to prevent arbitrary file read.
 func (b *Bot) sendFile(c tele.Context, path string) error {
+	// Clean path to resolve traversal sequences like ../
+	path = filepath.Clean(path)
+
+	// Validate the path is within allowed directories
+	if !b.validateDir(path) {
+		return c.Send(fmt.Sprintf("Access denied. File must be within allowed directories: %s", strings.Join(b.getAllowedDirs(), ", ")))
+	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return c.Send("File not found: " + path)
 	}

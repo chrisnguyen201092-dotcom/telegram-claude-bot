@@ -69,6 +69,11 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 	}
 
 	c.activeQueries.Store(opts.TelegramID, cmd)
+	// H1: Defer cleanup to prevent stuck-active state on panics or early returns
+	defer func() {
+		c.activeQueries.Delete(opts.TelegramID)
+		c.queryInfo.Delete(opts.TelegramID)
+	}()
 	activity := &QueryActivity{
 		TelegramID: opts.TelegramID,
 		Model:      opts.Model,
@@ -121,7 +126,7 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 					switch block.Type {
 					case "text":
 						if block.Text != "" {
-							accumulatedText = block.Text
+							accumulatedText += block.Text
 							if opts.OnPartialResponse != nil {
 								opts.OnPartialResponse(accumulatedText)
 							}
@@ -138,7 +143,7 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 							Status: "running",
 							Time:   store.NowUTC(),
 						}
-						activity.Tools = append(activity.Tools, toolAct)
+						activity.AppendTool(toolAct)
 						if opts.OnToolUse != nil {
 							opts.OnToolUse(block.Name, inputStr)
 						}
@@ -181,7 +186,7 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 						Status: "running",
 						Time:   store.NowUTC(),
 					}
-					activity.Tools = append(activity.Tools, toolAct)
+					activity.AppendTool(toolAct)
 					if opts.OnToolUse != nil {
 						opts.OnToolUse(ev.Name, inputStr)
 					}
@@ -203,13 +208,8 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 			}
 
 		case "tool_result":
-			// Mark last matching tool as done
-			for i := len(activity.Tools) - 1; i >= 0; i-- {
-				if activity.Tools[i].Status == "running" {
-					activity.Tools[i].Status = "done"
-					break
-				}
-			}
+			// M4: Use thread-safe method to mark tool done
+			activity.MarkLastToolDone()
 			events.Bus.Emit(events.EventSDKToolResult, map[string]any{
 				"telegram_id": opts.TelegramID,
 			})
@@ -236,9 +236,6 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 	<-stderrDone
 
 	if err := cmd.Wait(); err != nil {
-		c.activeQueries.Delete(opts.TelegramID)
-		c.queryInfo.Delete(opts.TelegramID)
-
 		errMsg := err.Error()
 		if stderrBuf.Len() > 0 {
 			errMsg = stderrBuf.String()
@@ -250,9 +247,6 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 		log.Printf("[claude] Error: %s | Stderr: %s", err.Error(), stderrBuf.String())
 		return nil, fmt.Errorf("claude exited: %s", errMsg)
 	}
-
-	c.activeQueries.Delete(opts.TelegramID)
-	c.queryInfo.Delete(opts.TelegramID)
 
 	if result.Content == "" {
 		result.Content = accumulatedText
@@ -271,19 +265,33 @@ func (c *Client) SendToClaude(ctx context.Context, message string, opts ClaudeOp
 
 // buildArgs constructs CLI args for the claude command.
 func buildArgs(message string, opts ClaudeOptions) []string {
-	args := []string{"-p", message, "--output-format", "stream-json", "--verbose"}
+	args := []string{"--output-format", "stream-json", "--verbose"}
 
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
 
-	// Only resume if we have a valid Claude CLI session ID (UUID format)
-	if opts.SessionID != "" && strings.Contains(opts.SessionID, "-") {
-		args = append(args, "--resume", opts.SessionID)
+	// Resume existing Claude CLI session if we have a real CLI session ID.
+	// Bot stores the CLI session ID from previous responses.
+	if opts.CLISessionID != "" {
+		args = append(args, "--resume", opts.CLISessionID)
 	}
 
 	if opts.SystemPrompt != "" {
-		args = append(args, "--system-prompt", opts.SystemPrompt)
+		// Claude CLI arg parser breaks on newlines in --system-prompt value
+		sp := strings.ReplaceAll(opts.SystemPrompt, "\n", " ")
+		args = append(args, "--system-prompt", sp)
+	}
+
+	// C7: Wire Effort, Thinking, MaxTurns, MaxBudget into CLI args
+	if opts.Effort != "" {
+		args = append(args, "--reasoning-effort", opts.Effort)
+	}
+	if opts.Thinking != "" {
+		args = append(args, "--thinking", opts.Thinking)
+	}
+	if opts.MaxTurns != nil {
+		args = append(args, "--max-turns", fmt.Sprintf("%d", *opts.MaxTurns))
 	}
 
 	// Tool allowlist based on mode
@@ -296,7 +304,13 @@ func buildArgs(message string, opts ClaudeOptions) []string {
 		// use default tools
 	}
 
-	args = append(args, "--permission-mode", "bypassPermissions")
+	// C3: Use configurable permission mode instead of hardcoded bypassPermissions
+	permMode := store.GetPermissionMode()
+	args = append(args, "--permission-mode", permMode)
+
+	// -p (--print) is a boolean flag for non-interactive mode.
+	// C8: Use -- separator before message to prevent flag injection
+	args = append(args, "-p", "--", message)
 
 	return args
 }

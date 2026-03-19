@@ -14,6 +14,11 @@ func (b *Bot) handleCallback(c tele.Context) error {
 	data := c.Data()
 	_ = c.Respond()
 
+	// telebot v4 prepends "\f{unique}|" to callback data — strip it
+	if idx := strings.Index(data, "|"); idx >= 0 && len(data) > 0 && data[0] == '\f' {
+		data = data[idx+1:]
+	}
+
 	switch {
 	case strings.HasPrefix(data, "model:"):
 		return b.callbackModel(c, strings.TrimPrefix(data, "model:"))
@@ -49,6 +54,17 @@ func (b *Bot) callbackModel(c tele.Context, modelID string) error {
 
 func (b *Bot) callbackEffort(c tele.Context, level string) error {
 	tid := telegramID(c)
+	// M9: Validate effort level against allowed values
+	valid := false
+	for _, e := range store.EffortLevels {
+		if e == level {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return c.Send("Invalid effort level.")
+	}
 	if err := store.UpsertSettings(tid, &store.UserSettings{Effort: level}); err != nil {
 		return c.Send("Failed to update effort.")
 	}
@@ -58,6 +74,17 @@ func (b *Bot) callbackEffort(c tele.Context, level string) error {
 
 func (b *Bot) callbackThinking(c tele.Context, mode string) error {
 	tid := telegramID(c)
+	// M9: Validate thinking mode against allowed values
+	valid := false
+	for _, t := range store.ThinkingModes {
+		if t == mode {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return c.Send("Invalid thinking mode.")
+	}
 	if err := store.UpsertSettings(tid, &store.UserSettings{Thinking: mode}); err != nil {
 		return c.Send("Failed to update thinking.")
 	}

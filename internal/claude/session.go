@@ -2,9 +2,11 @@ package claude
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/user/telegram-claude-bot/internal/events"
 	"github.com/user/telegram-claude-bot/internal/store"
@@ -82,7 +84,11 @@ func CompactSessionIfNeeded(cfg *store.GlobalConfig, telegramID, sessionID strin
 func summarizeWithClaude(conversation string) (string, error) {
 	prompt := fmt.Sprintf("Summarize this conversation concisely, capturing key decisions, actions taken, and important context. Keep it under 500 words.\n\n%s", conversation)
 
-	cmd := exec.Command("claude", "-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text", "--no-user-input")
+	// H2: Add timeout to prevent hanging summarize subprocess
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--", prompt, "--model", "claude-haiku-4-5", "--output-format", "text", "--no-user-input")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err

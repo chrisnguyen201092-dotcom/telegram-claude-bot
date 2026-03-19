@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -492,6 +494,10 @@ func (b *Bot) handleAdmin(c tele.Context) error {
 		if rest == "" {
 			return c.Send("Usage: /admin whitelist <telegram_id>")
 		}
+		// M8: Validate telegram ID is numeric
+		if _, err := strconv.ParseInt(rest, 10, 64); err != nil {
+			return c.Send("Invalid telegram ID: must be numeric.")
+		}
 		if err := store.SetWhitelist(rest, true); err != nil {
 			// User might not exist yet, create them
 			user := &store.User{
@@ -500,7 +506,10 @@ func (b *Bot) handleAdmin(c tele.Context) error {
 				IsWhitelisted: true,
 				CreatedAt:     store.NowUTC(),
 			}
-			_ = store.CreateUser(user)
+			// M1: Check and report CreateUser error
+			if createErr := store.CreateUser(user); createErr != nil {
+				return c.Send(fmt.Sprintf("Failed to whitelist user: %v", createErr))
+			}
 		}
 		return c.Send(fmt.Sprintf("User %s whitelisted.", rest))
 
@@ -508,12 +517,20 @@ func (b *Bot) handleAdmin(c tele.Context) error {
 		if rest == "" {
 			return c.Send("Usage: /admin ban <telegram_id>")
 		}
+		// M8: Validate telegram ID is numeric
+		if _, err := strconv.ParseInt(rest, 10, 64); err != nil {
+			return c.Send("Invalid telegram ID: must be numeric.")
+		}
 		_ = store.SetWhitelist(rest, false)
 		return c.Send(fmt.Sprintf("User %s banned.", rest))
 
 	case "remove":
 		if rest == "" {
 			return c.Send("Usage: /admin remove <telegram_id>")
+		}
+		// M8: Validate telegram ID is numeric
+		if _, err := strconv.ParseInt(rest, 10, 64); err != nil {
+			return c.Send("Invalid telegram ID: must be numeric.")
 		}
 		_ = store.DeleteUser(rest)
 		return c.Send(fmt.Sprintf("User %s removed.", rest))
@@ -729,7 +746,8 @@ func (b *Bot) handleDocument(c tele.Context) error {
 	}
 	defer reader.Close()
 
-	data, err := io.ReadAll(reader)
+	// H9: Limit document read to prevent unbounded memory usage (matches FileSize check above)
+	data, err := io.ReadAll(io.LimitReader(reader, 20*1024*1024))
 	if err != nil {
 		return c.Send("Failed to read document.")
 	}
@@ -769,6 +787,15 @@ func (b *Bot) sendToClaudeWithImages(c tele.Context, message string, images []cl
 	tid := telegramID(c)
 	user, _ := store.GetUser(tid)
 
+	// C1: Embed images as base64 data URLs in the message for Claude CLI
+	if len(images) > 0 {
+		var imgParts []string
+		for i, img := range images {
+			imgParts = append(imgParts, fmt.Sprintf("[Image %d: data:%s;base64,%s]", i+1, img.MediaType, img.Base64))
+		}
+		message = strings.Join(imgParts, "\n") + "\n\n" + message
+	}
+
 	// Rate limit check
 	rlResult := b.rateLimiter.CheckRateLimit(tid)
 	if !rlResult.Allowed {
@@ -783,7 +810,8 @@ func (b *Bot) sendToClaudeWithImages(c tele.Context, message string, images []cl
 	// Get or create session
 	session, _ := store.GetActiveSession(tid)
 	if session == nil {
-		sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+		// M6: Prefix temp IDs with "tmp_" for clarity
+		sessionID := fmt.Sprintf("tmp_%d", time.Now().UnixNano())
 		wd := ""
 		if user != nil {
 			wd = user.WorkingDirectory
@@ -821,10 +849,11 @@ func (b *Bot) sendToClaudeWithImages(c tele.Context, message string, images []cl
 
 	// Prepare Claude options
 	opts := claude.ClaudeOptions{
-		TelegramID: tid,
-		WorkingDir: userWorkingDir(user),
-		SessionID:  session.SessionID,
-		Images:     images,
+		TelegramID:   tid,
+		WorkingDir:   userWorkingDir(user),
+		SessionID:    session.SessionID,
+		CLISessionID: session.CLISessionID,
+		Images:       images,
 		Mode:       mode,
 		Model:      settings.Model,
 		Effort:     settings.Effort,
@@ -867,9 +896,12 @@ func (b *Bot) sendToClaudeWithImages(c tele.Context, message string, images []cl
 	// Add system prompt via dedicated field
 	opts.SystemPrompt = systemPrompt
 
-	// Execute query
-	ctx := context.Background()
-	result, err := b.claude.SendToClaude(ctx, message, opts)
+	// Execute query — C9: use request context for cancellation propagation
+	ctx := c.Get("ctx")
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result, err := b.claude.SendToClaude(ctx.(context.Context), message, opts)
 
 	if err != nil {
 		errMsg := "Error: " + err.Error()
@@ -877,9 +909,9 @@ func (b *Bot) sendToClaudeWithImages(c tele.Context, message string, images []cl
 		return nil
 	}
 
-	// Save Claude CLI session ID (UUID) for future resume
-	if result.SessionID != "" && result.SessionID != session.SessionID {
-		session.SessionID = result.SessionID
+	// Save Claude CLI session ID for future --resume
+	if result.SessionID != "" {
+		session.CLISessionID = result.SessionID
 		_ = store.SaveSession(session)
 	}
 
@@ -904,8 +936,11 @@ func (b *Bot) sendToClaudeWithImages(c tele.Context, message string, images []cl
 	_ = store.UpdateSessionLastUsed(tid, session.SessionID)
 
 	// Compact session if needed
+	// L5: Log compaction errors instead of silently discarding
 	go func() {
-		_ = claude.CompactSessionIfNeeded(b.config, tid, session.SessionID)
+		if err := claude.CompactSessionIfNeeded(b.config, tid, session.SessionID); err != nil {
+			log.Printf("[compact] Error compacting session %s for %s: %v", session.SessionID, tid, err)
+		}
 	}()
 
 	// Send final formatted response
@@ -947,16 +982,13 @@ func userWorkingDir(user *store.User) string {
 	return wd
 }
 
+// M2: truncate uses rune conversion to avoid breaking multi-byte characters.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
+// L1: Removed custom min() function — Go 1.21+ builtin is used instead.

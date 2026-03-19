@@ -43,16 +43,32 @@ func ReadJSON[T any](path string) (T, error) {
 }
 
 // WriteJSON writes a struct to a JSON file with pretty formatting.
-// Creates parent directories if needed.
+// Uses atomic write (temp file + rename) to prevent corruption on crash.
 func WriteJSON(path string, data any) error {
-	if err := EnsureDir(filepath.Dir(path)); err != nil {
+	dir := filepath.Dir(path)
+	if err := EnsureDir(dir); err != nil {
 		return err
 	}
 	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, bytes, 0644)
+	// Atomic write: write to temp file then rename
+	tmp, err := os.CreateTemp(dir, ".tmp-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(bytes); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // DeleteFile removes a file if it exists.
@@ -147,6 +163,7 @@ type SessionMeta struct {
 	TelegramID        string `yaml:"telegram_id" json:"telegram_id"`
 	Title             string `yaml:"title" json:"title"`
 	WorkingDir        string `yaml:"working_dir" json:"working_dir"`
+	CLISessionID      string `yaml:"cli_session_id,omitempty" json:"cli_session_id,omitempty"`
 	IsActive          bool   `yaml:"is_active" json:"is_active"`
 	CreatedAt         string `yaml:"created_at" json:"created_at"`
 	LastUsed          string `yaml:"last_used" json:"last_used"`

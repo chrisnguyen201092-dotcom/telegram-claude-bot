@@ -78,10 +78,10 @@ func LoadGlobalConfig() *GlobalConfig {
 		DefaultModel:       os.Getenv("CLAUDE_DEFAULT_MODEL"),
 		DefaultEffort:      os.Getenv("CLAUDE_DEFAULT_EFFORT"),
 		DefaultThinking:    os.Getenv("CLAUDE_DEFAULT_THINKING"),
-		MaxConcurrent:      getEnvInt("MAX_CONCURRENT", 5),
-		TimeoutMs:          getEnvInt("TIMEOUT_MS", 300000),
-		ContextMessages:    getEnvInt("CONTEXT_MESSAGES", 20),
-		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 10),
+		MaxConcurrent:      getEnvInt("MAX_CONCURRENT_CLI_PROCESSES", 5),
+		TimeoutMs:          getEnvInt("CLAUDE_CLI_TIMEOUT_MS", 300000),
+		ContextMessages:    getEnvInt("CLAUDE_CONTEXT_MESSAGES", 20),
+		RateLimitPerMinute: getEnvInt("RATE_LIMIT_REQUESTS_PER_MINUTE", 10),
 		AdminAPIKey:        os.Getenv("ADMIN_API_KEY"),
 		CompactThreshold:   getEnvInt("COMPACT_THRESHOLD", 50),
 		CompactKeepRecent:  getEnvInt("COMPACT_KEEP_RECENT", 10),
@@ -125,22 +125,22 @@ func LoadGlobalConfig() *GlobalConfig {
 		if v, ok := fileConf["CLAUDE_DEFAULT_THINKING"]; ok && v != "" {
 			cfg.DefaultThinking = v
 		}
-		if v, ok := fileConf["MAX_CONCURRENT"]; ok && v != "" {
+		if v, ok := fileConf["MAX_CONCURRENT_CLI_PROCESSES"]; ok && v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				cfg.MaxConcurrent = n
 			}
 		}
-		if v, ok := fileConf["TIMEOUT_MS"]; ok && v != "" {
+		if v, ok := fileConf["CLAUDE_CLI_TIMEOUT_MS"]; ok && v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				cfg.TimeoutMs = n
 			}
 		}
-		if v, ok := fileConf["CONTEXT_MESSAGES"]; ok && v != "" {
+		if v, ok := fileConf["CLAUDE_CONTEXT_MESSAGES"]; ok && v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				cfg.ContextMessages = n
 			}
 		}
-		if v, ok := fileConf["RATE_LIMIT_PER_MINUTE"]; ok && v != "" {
+		if v, ok := fileConf["RATE_LIMIT_REQUESTS_PER_MINUTE"]; ok && v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				cfg.RateLimitPerMinute = n
 			}
@@ -213,4 +213,22 @@ func GetAllConfig() (map[string]string, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// C3: GetPermissionMode returns the configured Claude permission mode.
+// Defaults to "auto" for non-interactive bot usage (CLI would hang on "default").
+func GetPermissionMode() string {
+	mode := os.Getenv("CLAUDE_PERMISSION_MODE")
+	if mode == "" {
+		mode = "auto"
+	}
+	return mode
+}
+
+// C5: ImmutableConfigKeys are keys that cannot be modified via the dashboard API.
+var ImmutableConfigKeys = map[string]bool{
+	"TELEGRAM_BOT_TOKEN":    true,
+	"ADMIN_API_KEY":         true,
+	"ADMIN_TELEGRAM_IDS":    true,
+	"CLAUDE_PERMISSION_MODE": true,
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -57,11 +59,16 @@ func StartServer(ctx context.Context, addr string, cfg *store.GlobalConfig) erro
 		r.Get("/logs", handleGetLogs)
 	})
 
+	// L3: Resolve static files relative to executable path, not CWD
+	execPath, _ := os.Executable()
+	execDir := filepath.Dir(execPath)
+	staticDir := filepath.Join(execDir, "static")
+
 	// Static files (dashboard)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/dashboard.html")
+		http.ServeFile(w, r, filepath.Join(staticDir, "dashboard.html"))
 	})
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 
 	srv := &http.Server{Addr: addr, Handler: r}
 
@@ -82,8 +89,9 @@ var startTime = time.Now()
 func apiKeyAuth(apiKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// C4: Return 403 when AdminAPIKey is empty — never allow unauthenticated access
 			if apiKey == "" {
-				next.ServeHTTP(w, r)
+				writeErrorJSON(w, "dashboard API disabled: no API key configured", http.StatusForbidden)
 				return
 			}
 			key := r.Header.Get("X-API-Key")
@@ -91,7 +99,7 @@ func apiKeyAuth(apiKey string) func(http.Handler) http.Handler {
 				key = r.URL.Query().Get("api_key")
 			}
 			if key != apiKey {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				writeErrorJSON(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -99,12 +107,19 @@ func apiKeyAuth(apiKey string) func(http.Handler) http.Handler {
 	}
 }
 
+// H10: writeErrorJSON safely encodes error responses as JSON, preventing injection.
+func writeErrorJSON(w http.ResponseWriter, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // --- API Handlers ---
 
 func handleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := store.ListAllUsers()
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+		writeErrorJSON(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -114,7 +129,7 @@ func handleListUsers(w http.ResponseWriter, r *http.Request) {
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := store.GetStats()
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+		writeErrorJSON(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	costStats := store.GetAllCostStats()
@@ -129,8 +144,12 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 func handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg, err := store.GetAllConfig()
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+		writeErrorJSON(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// M-F: Filter sensitive keys from GET response
+	for k := range store.ImmutableConfigKeys {
+		delete(cfg, k)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cfg)
@@ -139,12 +158,19 @@ func handleGetConfig(w http.ResponseWriter, r *http.Request) {
 func handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	var body map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		writeErrorJSON(w, "invalid json", http.StatusBadRequest)
 		return
+	}
+	// C5: Reject modifications to sensitive/immutable config keys
+	for k := range body {
+		if store.ImmutableConfigKeys[k] {
+			writeErrorJSON(w, fmt.Sprintf("key %q is immutable and cannot be modified via API", k), http.StatusForbidden)
+			return
+		}
 	}
 	for k, v := range body {
 		if err := store.SetConfig(k, v); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			writeErrorJSON(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -159,7 +185,7 @@ func handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	logs, err := store.GetLogs(date, 100)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+		writeErrorJSON(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -231,9 +257,8 @@ func (h *wsHub) removeClient(c *wsClient) {
 }
 
 func (h *wsHub) handleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
+	// H1: Removed InsecureSkipVerify to enforce origin checking
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket accept error: %v", err)
 		return

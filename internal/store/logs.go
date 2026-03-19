@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -81,4 +82,31 @@ func GetStats() (map[string]any, error) {
 		"total_logs_today": len(logs),
 		"error_count":      errorCount,
 	}, nil
+}
+
+// L6: PruneLogs removes log files older than maxDays to prevent unbounded growth.
+func PruneLogs(maxDays int) error {
+	dir := filepath.Join(DataDir, "logs")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -maxDays).Format("2006-01-02")
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		date := strings.TrimSuffix(name, ".json")
+		if date < cutoff {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+	return nil
 }

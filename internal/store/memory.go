@@ -73,12 +73,16 @@ func ListMemory(telegramID string) ([]*Memory, error) {
 
 func DeleteMemory(telegramID, key string) (bool, error) {
 	path := memoryPath(telegramID, key)
-	if !FileExists(path) {
-		return false, nil
-	}
 	unlock := lockFile(path)
 	defer unlock()
-	return true, DeleteFile(path)
+	err := os.Remove(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func ClearMemory(telegramID string) (int, error) {

@@ -43,6 +43,15 @@ func (rl *RateLimiter) CheckRateLimit(telegramID string) RateLimitResult {
 		}
 	}
 
+	// H5: Enforce global maxConcurrent limit
+	if rl.maxConcurrent > 0 && len(rl.active) >= rl.maxConcurrent {
+		return RateLimitResult{
+			Allowed:       false,
+			RetryAfterSec: 5,
+			Reason:        "max concurrent queries reached, try again shortly",
+		}
+	}
+
 	now := time.Now()
 	cutoff := now.Add(-rl.windowDur)
 

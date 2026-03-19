@@ -1,5 +1,7 @@
 package claude
 
+import "sync"
+
 // ImageInput for vision
 type ImageInput struct {
 	Base64    string `json:"base64"`
@@ -8,18 +10,19 @@ type ImageInput struct {
 
 // ClaudeOptions for sendToClaude
 type ClaudeOptions struct {
-	TelegramID   string
-	WorkingDir   string
-	SessionID    string
-	SystemPrompt string
-	Images       []ImageInput
-	Mode         string // "full", "plan", "ask"
-	Model        string
-	Effort       string
-	Thinking     string
-	MaxTurns     *int
-	MaxBudget    *float64
-	TimeoutMs    int
+	TelegramID     string
+	WorkingDir     string
+	SessionID      string
+	CLISessionID   string // Claude CLI session ID from previous response, for --resume
+	SystemPrompt   string
+	Images         []ImageInput
+	Mode           string // "full", "plan", "ask"
+	Model          string
+	Effort         string
+	Thinking       string
+	MaxTurns       *int
+	MaxBudget      *float64
+	TimeoutMs      int
 
 	// Streaming callbacks
 	OnPartialResponse func(text string)
@@ -51,12 +54,32 @@ type ToolActivity struct {
 	Time   string `json:"time"`
 }
 
-// QueryActivity tracks an active query
+// M4: QueryActivity tracks an active query with mutex for concurrent Tools access
 type QueryActivity struct {
+	mu         sync.Mutex     `json:"-"`
 	TelegramID string         `json:"telegram_id"`
 	Model      string         `json:"model"`
 	StartTime  string         `json:"start_time"`
 	Tools      []ToolActivity `json:"tools"`
+}
+
+// AppendTool safely appends a tool activity under the mutex.
+func (qa *QueryActivity) AppendTool(tool ToolActivity) {
+	qa.mu.Lock()
+	defer qa.mu.Unlock()
+	qa.Tools = append(qa.Tools, tool)
+}
+
+// MarkLastToolDone marks the last running tool as done.
+func (qa *QueryActivity) MarkLastToolDone() {
+	qa.mu.Lock()
+	defer qa.mu.Unlock()
+	for i := len(qa.Tools) - 1; i >= 0; i-- {
+		if qa.Tools[i].Status == "running" {
+			qa.Tools[i].Status = "done"
+			break
+		}
+	}
 }
 
 // CLIEvent represents a parsed event from Claude CLI stream-json output

@@ -119,12 +119,38 @@ func SplitMessage(text string, maxLen int) []string {
 		}
 	}
 
-	// Remove empty chunks
+	// Remove empty chunks and repair unclosed HTML tags (M7)
 	result := chunks[:0]
 	for _, c := range chunks {
 		if strings.TrimSpace(c) != "" {
-			result = append(result, c)
+			result = append(result, repairUnclosedTags(c))
 		}
 	}
 	return result
+}
+
+// M7: repairUnclosedTags detects and closes unclosed HTML tags after splitting.
+func repairUnclosedTags(chunk string) string {
+	// Track open tags (only Telegram-supported HTML tags)
+	tags := []string{"b", "i", "u", "s", "code", "pre", "a"}
+	var openStack []string
+
+	for _, tag := range tags {
+		openRe := regexp.MustCompile(`<` + tag + `[^>]*>`)
+		closeRe := regexp.MustCompile(`</` + tag + `>`)
+
+		opens := len(openRe.FindAllString(chunk, -1))
+		closes := len(closeRe.FindAllString(chunk, -1))
+
+		for i := 0; i < opens-closes; i++ {
+			openStack = append(openStack, tag)
+		}
+	}
+
+	// Close tags in reverse order
+	for i := len(openStack) - 1; i >= 0; i-- {
+		chunk += "</" + openStack[i] + ">"
+	}
+
+	return chunk
 }

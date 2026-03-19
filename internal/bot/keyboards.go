@@ -28,7 +28,8 @@ func EffortPicker(currentEffort string) *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	var btns []tele.Btn
 	for _, e := range store.EffortLevels {
-		label := strings.Title(e)
+		// M3: Replace deprecated strings.Title with manual capitalization
+		label := strings.ToUpper(e[:1]) + e[1:]
 		if e == currentEffort {
 			label = "✓ " + label
 		}
@@ -109,7 +110,13 @@ func SessionList(sessions []*store.SessionMeta) *tele.ReplyMarkup {
 		if s.IsActive {
 			label = "✓ " + label
 		}
-		rows = append(rows, menu.Row(menu.Data(label, "sess_"+s.SessionID, "session:"+s.SessionID)))
+		// Telegram callback data limit: 64 bytes total.
+		// telebot format: "\f{unique}|{data}" — keep both short.
+		sid := s.SessionID
+		if len(sid) > 36 {
+			sid = sid[:36]
+		}
+		rows = append(rows, menu.Row(menu.Data(label, "ss", "session:"+sid)))
 	}
 	menu.Inline(rows...)
 	return menu

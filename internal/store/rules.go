@@ -25,11 +25,12 @@ func userRulePath(telegramID, name string) string {
 
 func AddGlobalRule(name, content string) (bool, error) {
 	path := globalRulePath(name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if FileExists(path) {
 		return false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	rule := &Rule{
 		Name:      name,
 		Content:   content,
@@ -41,11 +42,12 @@ func AddGlobalRule(name, content string) (bool, error) {
 
 func AddUserRule(telegramID, name, content string) (bool, error) {
 	path := userRulePath(telegramID, name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if FileExists(path) {
 		return false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	rule := &Rule{
 		Name:      name,
 		Content:   content,
@@ -57,31 +59,34 @@ func AddUserRule(telegramID, name, content string) (bool, error) {
 
 func RemoveGlobalRule(name string) (bool, error) {
 	path := globalRulePath(name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if !FileExists(path) {
 		return false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	return true, DeleteFile(path)
 }
 
 func RemoveUserRule(telegramID, name string) (bool, error) {
 	path := userRulePath(telegramID, name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if !FileExists(path) {
 		return false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	return true, DeleteFile(path)
 }
 
 func ToggleUserRule(telegramID, name string) (found bool, isActive bool, err error) {
 	path := userRulePath(telegramID, name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if !FileExists(path) {
 		return false, false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	rule, err := ReadJSON[Rule](path)
 	if err != nil {
 		return false, false, err

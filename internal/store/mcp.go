@@ -33,21 +33,23 @@ func AddMcpServer(server *McpServer) error {
 
 func RemoveMcpServer(name string) (bool, error) {
 	path := mcpPath(name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if !FileExists(path) {
 		return false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	return true, DeleteFile(path)
 }
 
 func ToggleMcpServer(name string) (found bool, isActive bool, err error) {
 	path := mcpPath(name)
+	// M11: Lock first to prevent TOCTOU race
+	unlock := lockFile(path)
+	defer unlock()
 	if !FileExists(path) {
 		return false, false, nil
 	}
-	unlock := lockFile(path)
-	defer unlock()
 	server, err := ReadJSON[McpServer](path)
 	if err != nil {
 		return false, false, err

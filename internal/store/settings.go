@@ -52,11 +52,38 @@ func GetSettings(telegramID string) (*UserSettings, error) {
 	return &s, nil
 }
 
+// H3: UpsertSettings merges non-empty fields into existing settings instead of overwriting all.
 func UpsertSettings(telegramID string, s *UserSettings) error {
-	unlock := lockFile(settingsPath(telegramID))
+	path := settingsPath(telegramID)
+	unlock := lockFile(path)
 	defer unlock()
-	s.UpdatedAt = NowUTC()
-	return WriteJSON(settingsPath(telegramID), s)
+
+	// Load existing settings
+	existing, err := ReadJSON[UserSettings](path)
+	if err != nil && !os.IsNotExist(err) {
+		// If file doesn't exist, start with empty settings
+		existing = UserSettings{}
+	}
+
+	// Merge non-empty fields from input into existing
+	if s.Model != "" {
+		existing.Model = s.Model
+	}
+	if s.Effort != "" {
+		existing.Effort = s.Effort
+	}
+	if s.Thinking != "" {
+		existing.Thinking = s.Thinking
+	}
+	if s.MaxTurns != nil {
+		existing.MaxTurns = s.MaxTurns
+	}
+	if s.MaxBudgetUSD != nil {
+		existing.MaxBudgetUSD = s.MaxBudgetUSD
+	}
+	existing.UpdatedAt = NowUTC()
+
+	return WriteJSON(path, existing)
 }
 
 func ResolveModelAlias(input string) string {
